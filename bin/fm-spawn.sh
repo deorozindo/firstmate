@@ -2471,7 +2471,7 @@ if [ "$RELAUNCH" -eq 1 ]; then
   }
 elif [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-  '' | claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin | commandcode | polytoken | cortex | kiro)
+  '' | claude | codex | opencode | pi | pi-signed | grok | kimi | cursor | gemini | muse | rovo | omp | agy | devin | commandcode | polytoken | cortex | kiro | dsh)
     ARG3=${POS[1]:-}
     ;;
   *' '*)
@@ -3009,6 +3009,15 @@ launch_template() {
   esac
 }
 
+# dsh is not a pane harness. Exit in the main shell: launch_template runs
+# inside a substitution, so an exit there would not stop this script.
+refuse_dsh() {
+  [ "$1" = dsh ] || return 0
+  dsh_ver=$(/root/dsh/run.sh --version 2>/dev/null | head -1 | tr -d '[:space:]')
+  echo "error: dsh ${dsh_ver:-unknown} is a one-shot read-only executor through the local CLIProxy. It cannot run a pane crewmate or a secondmate; it has no primary supervision protocol. The pin is 0.2.1-rc.5." >&2
+  exit 1
+}
+
 case "$ARG3" in
 *' '*) # raw launch command (unverified-adapter escape hatch)
   RAW_LAUNCH=1
@@ -3021,6 +3030,7 @@ case "$ARG3" in
       ;;
     esac
   done
+  refuse_dsh "$HARNESS"
   ;;
 '')
   # No explicit harness: resolve from config. A secondmate AGENT launches on the
@@ -3042,6 +3052,7 @@ case "$ARG3" in
     HARNESS=$("$FM_ROOT/bin/fm-harness.sh" crew)
     harness_src='config/crew-harness'
   fi
+  refuse_dsh "$HARNESS"
   LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
     echo "error: no launch template for harness '$HARNESS' (from $harness_src or detection); pass a raw launch command to use an unverified adapter" >&2
     exit 1
@@ -3049,6 +3060,7 @@ case "$ARG3" in
   ;;
 *)
   HARNESS=$ARG3
+  refuse_dsh "$HARNESS"
   LAUNCH=$(launch_template "$HARNESS" "$KIND") || {
     echo "error: unknown harness '$HARNESS'; pass a raw launch command to use an unverified adapter" >&2
     exit 1

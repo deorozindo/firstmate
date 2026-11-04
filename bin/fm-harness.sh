@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Detect the agent harness this process tree runs on.
-# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin|commandcode|polytoken|cortex|kiro|unknown
+# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|pi-signed|grok|kimi|cursor|gemini|muse|rovo|omp|agy|devin|commandcode|polytoken|cortex|kiro|dsh|unknown
 #        fm-harness.sh crew             print the effective CREWMATE harness
 #                                        (config/crew-harness; "default" resolves to own)
 #        fm-harness.sh secondmate [id]  print the harness the PRIMARY uses to launch
@@ -131,6 +131,15 @@ harness_marker() {
     echo omp
     return
   fi
+  # dsh 0.2.1-rc.5 publica nenhum marker. O Node desta VPS põe comm=MainThread,
+  # então o nome do processo não prova o harness. FM_DSH_HARNESS=dsh vale só
+  # quando o argv do binário dsh está na ancestralidade. Sem isso, um
+  # CLAUDECODE herdado nomearia o Executor como claude. O marker sozinho,
+  # sem o processo, não muda um worker claude.
+  if [ "${FM_DSH_HARNESS:-}" = dsh ] && ancestry_names_dsh; then
+    echo dsh
+    return
+  fi
   [ "${CLAUDECODE:-}" = "1" ] && { echo claude; return; }
   if [ "${PI_CODING_AGENT:-}" = "true" ]; then
     if [ "${FM_PI_HARNESS:-}" = pi-signed ]; then echo pi-signed; else echo pi; fi
@@ -166,6 +175,21 @@ ancestry_names_omp() {
   for _ in 1 2 3 4 5 6 7 8; do
     comm=$(ps -o comm= -p "$pid" 2>/dev/null) || return 1
     [ "$(basename -- "$comm")" = omp ] && return 0
+    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
+  done
+  return 1
+}
+
+# True when a dsh node process sits within eight parents. comm is MainThread
+# on this Node, so the match is the pinned bin path in argv, never the word dsh.
+ancestry_names_dsh() {
+  local pid=$$ args
+  for _ in 1 2 3 4 5 6 7 8; do
+    args=$(ps -o args= -p "$pid" 2>/dev/null) || return 1
+    case "$args" in
+      *"/root/dsh/app/node_modules/.bin/dsh"*|*"@deepseek-ai/dsh/lib/bin.js"*) return 0 ;;
+    esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1
   done
@@ -278,6 +302,15 @@ harness_process_verdict() {  # <pid>
     # crewmate/scout adapter only and is never a primary or secondmate, so
     # this arm only lets a kiro crewmate identify its own harness.
     kiro-cli) echo "comm kiro"; return ;;
+    # dsh 0.2.1-rc.5 is a node script. This Node reports comm=MainThread, not
+    # dsh (verified 2026-11-04: argv is `node .../.bin/dsh`). Match only that
+    # pinned path. Do not treat every MainThread as dsh.
+    MainThread)
+      args=$(ps -o args= -p "$pid" 2>/dev/null)
+      case "$args" in
+        *"/root/dsh/app/node_modules/.bin/dsh"*|*"@deepseek-ai/dsh/lib/bin.js"*) echo "args dsh"; return ;;
+      esac
+      ;;
     node*|python*)
       # Bare interpreter: match the harness name in its script path.
       args=$(ps -o args= -p "$pid" 2>/dev/null)
